@@ -7,101 +7,45 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <random>
+#include <fstream>
 
 PlayMode::PlayMode() {
-	//TODO:
-	// you *must* use an asset pipeline of some sort to generate tiles.
-	// don't hardcode them like this!
-	// or, at least, if you do hardcode them like this,
-	//  make yourself a script that spits out the code that you paste in here
-	//   and check that script into your repository.
+	// Read background, tile, and palette assets from binary files
+	// Based on code shared by Jude Markabawi (jmarkaba@andrew.cmu.edu) in game1-sprite-based on the class Discord
+	std::string bg_filename = "output_of_asset_gen/background.bin";
+	std::ifstream bg_file(bg_filename, std::ios_base::binary);
+	bg_file.read(reinterpret_cast<char*> (ppu.background.data()), sizeof(ppu.background));
 
-	//Also, *don't* use these tiles in your game:
+	std::string pt_filename = "output_of_asset_gen/palette_table.bin";
+	std::ifstream pt_file(pt_filename, std::ios_base::binary);
+	pt_file.read(reinterpret_cast<char*> (ppu.palette_table.data()), sizeof(ppu.palette_table));
 
-	{ //use tiles 0-16 as some weird dot pattern thing:
-		std::array< uint8_t, 8*8 > distance;
-		for (uint32_t y = 0; y < 8; ++y) {
-			for (uint32_t x = 0; x < 8; ++x) {
-				float d = glm::length(glm::vec2((x + 0.5f) - 4.0f, (y + 0.5f) - 4.0f));
-				d /= glm::length(glm::vec2(4.0f, 4.0f));
-				distance[x+8*y] = uint8_t(std::max(0,std::min(255,int32_t( 255.0f * d ))));
-			}
+	std::string tt_filename = "output_of_asset_gen/tile_table.bin";
+	std::ifstream tt_file(tt_filename, std::ios_base::binary);
+	tt_file.read(reinterpret_cast<char*> (ppu.tile_table.data()), sizeof(ppu.tile_table));
+
+	// Initialize enemy array
+	// TODO: Implement randomness between enemies in movement and firing times?
+	for (int i = 0; i < 10; i++) {
+		enemies[i].index = int8_t(i * 4 + 6); // Enemy sprite indices start at 6, increment by 4 since they require 4 sprites (3 + shot)
+		enemies[i].active = 1;
+		enemies[i].position.x = (i % 5) * 40.0f + 16.0f;
+		enemies[i].initial_x = int8_t((i % 5) * 40 + 16);
+		if (i >= 5) {
+			enemies[i].position.y = 232.0f;
+		} else {
+			enemies[i].position.y = 216.0f;
 		}
-		for (uint32_t index = 0; index < 16; ++index) {
-			PPU466::Tile tile;
-			uint8_t t = uint8_t((255 * index) / 16);
-			for (uint32_t y = 0; y < 8; ++y) {
-				uint8_t bit0 = 0;
-				uint8_t bit1 = 0;
-				for (uint32_t x = 0; x < 8; ++x) {
-					uint8_t d = distance[x+8*y];
-					if (d > t) {
-						bit0 |= (1 << x);
-					} else {
-						bit1 |= (1 << x);
-					}
-				}
-				tile.bit0[y] = bit0;
-				tile.bit1[y] = bit1;
-			}
-			ppu.tile_table[index] = tile;
-		}
+		enemies[i].time_since_fired = i * 0.8f; // Fire every 10 seconds, with varying initial timing based on position
 	}
 
-	//use sprite 32 as a "player":
-	ppu.tile_table[32].bit0 = {
-		0b01111110,
-		0b11111111,
-		0b11111111,
-		0b11111111,
-		0b11111111,
-		0b11111111,
-		0b11111111,
-		0b01111110,
-	};
-	ppu.tile_table[32].bit1 = {
-		0b00000000,
-		0b00000000,
-		0b00011000,
-		0b00100100,
-		0b00000000,
-		0b00100100,
-		0b00000000,
-		0b00000000,
-	};
-
-	//makes the outside of tiles 0-16 solid:
-	ppu.palette_table[0] = {
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-	};
-
-	//makes the center of tiles 0-16 solid:
-	ppu.palette_table[1] = {
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-	};
-
-	//used for the player:
-	ppu.palette_table[7] = {
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0xff, 0xff, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-	};
-
-	//used for the misc other sprites:
-	ppu.palette_table[6] = {
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x88, 0x88, 0xff, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-	};
-
+	// Initialize shot array
+	for (int i = 0; i < 10; i++) {
+		shots[i].index = int8_t(i * 4 + 9); // Shot indices immediately follow their source enemy indices, starting at 9
+		shots[i].active = 0;
+		shots[i].position.x = 0.0f;
+		shots[i].position.y = 240.0f;
+	}
 }
 
 PlayMode::~PlayMode() {
@@ -118,14 +62,8 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 			right.downs += 1;
 			right.pressed = true;
 			return true;
-		} else if (evt.key.keysym.sym == SDLK_UP) {
-			up.downs += 1;
-			up.pressed = true;
-			return true;
-		} else if (evt.key.keysym.sym == SDLK_DOWN) {
-			down.downs += 1;
-			down.pressed = true;
-			return true;
+		} else if (evt.key.keysym.sym == SDLK_ESCAPE) { // Exit with the escape key
+			exit(0);
 		}
 	} else if (evt.type == SDL_KEYUP) {
 		if (evt.key.keysym.sym == SDLK_LEFT) {
@@ -134,12 +72,6 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 		} else if (evt.key.keysym.sym == SDLK_RIGHT) {
 			right.pressed = false;
 			return true;
-		} else if (evt.key.keysym.sym == SDLK_UP) {
-			up.pressed = false;
-			return true;
-		} else if (evt.key.keysym.sym == SDLK_DOWN) {
-			down.pressed = false;
-			return true;
 		}
 	}
 
@@ -147,63 +79,176 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 }
 
 void PlayMode::update(float elapsed) {
+	if (game_over) {
+		return;
+	}
 
-	//slowly rotates through [0,1):
-	// (will be used to set background color)
-	background_fade += elapsed / 10.0f;
-	background_fade -= std::floor(background_fade);
-
-	constexpr float PlayerSpeed = 30.0f;
+	constexpr float PlayerSpeed = 100.0f;
 	if (left.pressed) player_at.x -= PlayerSpeed * elapsed;
 	if (right.pressed) player_at.x += PlayerSpeed * elapsed;
-	if (down.pressed) player_at.y -= PlayerSpeed * elapsed;
-	if (up.pressed) player_at.y += PlayerSpeed * elapsed;
+
+	constexpr float BallSpeed = 100.0f;
+	if (ball_up) {
+		ball_at.y += BallSpeed * elapsed;
+	} else {
+		ball_at.y -= BallSpeed * elapsed;
+	}
+
+	if (ball_right) {
+		ball_at.x += BallSpeed * elapsed;
+	} else {
+		ball_at.x -= BallSpeed * elapsed;
+	}
+
+	// Check for ball collusion with enemies, and move enemies
+	uint8_t enemies_exist = 0;
+	constexpr float EnemySpeed = 50.0f;
+	for (int i = 0; i < 10; i++) {
+		if (enemies[i].active) {
+			enemies_exist = 1;
+			if (enemies[i].moving_right) {
+				enemies[i].position.x += EnemySpeed * elapsed;
+			} else {
+				enemies[i].position.x -= EnemySpeed * elapsed;
+			}
+		}
+
+		if (ball_up && enemies[i].active && ball_at.y >= enemies[i].position.y && ball_at.x >= (enemies[i].position.x - 8) && ball_at.x < (enemies[i].position.x + 16)) {
+			enemies[i].active = false;
+			enemies[i].position.x = 0.0f;
+			enemies[i].position.y = 240.0f;
+			ball_up = ! ball_up;
+		}
+
+		// Change direction if gone too far
+		if ((enemies[i].active && enemies[i].moving_right && (enemies[i].position.x - enemies[i].initial_x >= 64.0f))
+			|| ((! enemies[i].moving_right) && (enemies[i].position.x < enemies[i].initial_x))) {
+			enemies[i].moving_right = ! enemies[i].moving_right;
+		}
+
+		// Fire shots
+		if (enemies[i].active) {
+			if (enemies[i].time_since_fired > 10.0f) {
+				shots[i].active = true;
+				shots[i].position.x = enemies[i].position.x;
+				shots[i].position.y = enemies[i].position.y;
+				enemies[i].time_since_fired = 0.0f;
+			} else {
+				enemies[i].time_since_fired += elapsed;
+			}
+		}
+	}
+
+	if (! enemies_exist) {
+		std::cout << "You win!" << std::endl;
+		game_over = true;
+	}
+
+	// Check for ball collision with floor
+	if ((! ball_up) && ball_at.y <= 0 && (ball_at.x >= (player_at.x + 24) || ball_at.x < (player_at.x - 16))) {
+		std::cout << "Game over!" << std::endl;
+		game_over = true;
+	}
+	
+	// Check for ball collision with player or ceiling
+	if (((! ball_up) && ball_at.y <= player_at.y && ball_at.x >= (player_at.x - 16) && ball_at.x < (player_at.x + 24))
+		|| ball_up && ball_at.y >= 240) {
+		ball_up = ! ball_up;
+	}
+
+	// Check for ball collision with wall
+	if ((ball_right && ball_at.x >= 256) || ((! ball_right) && ball_at.x <= 0)) {
+		ball_right = ! ball_right;
+	}
+
+	// Move enemy shots and check for shot collision with player
+	constexpr float ShotSpeed = 150.0f;
+	for (int i = 0; i < 10; i++) {
+		if (shots[i].active) {
+			shots[i].position.y -= ShotSpeed * elapsed;
+		}
+
+		if (shots[i].active && shots[i].position.y <= player_at.y && shots[i].position.x >= (player_at.x - 16) && shots[i].position.x < (player_at.x + 24)) {
+			std::cout << "Game over!" << std::endl;
+			game_over = true;
+		}
+
+		if (shots[i].active && shots[i].position.y <= 0.0f) {
+			shots[i].active = false;
+			shots[i].position.x = 0.0f;
+			shots[i].position.y = 240.0f;
+		}
+	}
 
 	//reset button press counters:
 	left.downs = 0;
 	right.downs = 0;
-	up.downs = 0;
-	down.downs = 0;
 }
 
 void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	//--- set ppu state based on game state ---
 
-	//background color will be some hsv-like fade:
-	ppu.background_color = glm::u8vec4(
-		std::min(255,std::max(0,int32_t(255 * 0.5f * (0.5f + std::sin( 2.0f * M_PI * (background_fade + 0.0f / 3.0f) ) ) ))),
-		std::min(255,std::max(0,int32_t(255 * 0.5f * (0.5f + std::sin( 2.0f * M_PI * (background_fade + 1.0f / 3.0f) ) ) ))),
-		std::min(255,std::max(0,int32_t(255 * 0.5f * (0.5f + std::sin( 2.0f * M_PI * (background_fade + 2.0f / 3.0f) ) ) ))),
-		0xff
-	);
+	//background color will just be black
+	ppu.background_color = glm::u8vec4(0xff, 0xff, 0xff, 0xff);
 
-	//tilemap gets recomputed every frame as some weird plasma thing:
-	//NOTE: don't do this in your game! actually make a map or something :-)
-	for (uint32_t y = 0; y < PPU466::BackgroundHeight; ++y) {
-		for (uint32_t x = 0; x < PPU466::BackgroundWidth; ++x) {
-			//TODO: make weird plasma thing
-			ppu.background[x+PPU466::BackgroundWidth*y] = ((x+y)%16);
-		}
-	}
-
-	//background scroll:
-	ppu.background_position.x = int32_t(-0.5f * player_at.x);
-	ppu.background_position.y = int32_t(-0.5f * player_at.y);
+	// Background scroll is disabled; comments are kept for my own clarity
+	// ppu.background_position.x = int32_t(-0.5f * player_at.x);
+	// ppu.background_position.y = int32_t(-0.5f * player_at.y);
 
 	//player sprite:
 	ppu.sprites[0].x = int8_t(player_at.x);
 	ppu.sprites[0].y = int8_t(player_at.y);
-	ppu.sprites[0].index = 32;
-	ppu.sprites[0].attributes = 7;
+	ppu.sprites[0].index = 3;
+	ppu.sprites[0].attributes = 0;
 
-	//some other misc sprites:
-	for (uint32_t i = 1; i < 63; ++i) {
-		float amt = (i + 2.0f * background_fade) / 62.0f;
-		ppu.sprites[i].x = int8_t(0.5f * PPU466::ScreenWidth + std::cos( 2.0f * M_PI * amt * 5.0f + 0.01f * player_at.x) * 0.4f * PPU466::ScreenWidth);
-		ppu.sprites[i].y = int8_t(0.5f * PPU466::ScreenHeight + std::sin( 2.0f * M_PI * amt * 3.0f + 0.01f * player_at.y) * 0.4f * PPU466::ScreenWidth);
-		ppu.sprites[i].index = 32;
-		ppu.sprites[i].attributes = 6;
-		if (i % 2) ppu.sprites[i].attributes |= 0x80; //'behind' bit
+	//player left wing
+	ppu.sprites[1].x = int8_t(player_at.x - 8);
+	ppu.sprites[1].y = int8_t(player_at.y);
+	ppu.sprites[1].index = 2;
+	ppu.sprites[1].attributes = 0;
+	ppu.sprites[2].x = int8_t(player_at.x - 16);
+	ppu.sprites[2].y = int8_t(player_at.y);
+	ppu.sprites[2].index = 1;
+	ppu.sprites[2].attributes = 0;
+
+	//player right wing
+	ppu.sprites[3].x = int8_t(player_at.x + 8);
+	ppu.sprites[3].y = int8_t(player_at.y);
+	ppu.sprites[3].index = 2;
+	ppu.sprites[3].attributes = 0;
+	ppu.sprites[4].x = int8_t(player_at.x + 16);
+	ppu.sprites[4].y = int8_t(player_at.y);
+	ppu.sprites[4].index = 4;
+	ppu.sprites[4].attributes = 0;
+
+	//ball
+	ppu.sprites[5].x = int8_t(ball_at.x);
+	ppu.sprites[5].y = int8_t(ball_at.y);
+	ppu.sprites[5].index = 5;
+	ppu.sprites[5].attributes = 0;
+
+	for (int i = 0; i < 10; i++) {
+		//draw enemies
+		ppu.sprites[enemies[i].index].x = int8_t(enemies[i].position.x);
+		ppu.sprites[enemies[i].index].y = int8_t(enemies[i].position.y);
+		ppu.sprites[enemies[i].index].index = 7;
+		ppu.sprites[enemies[i].index].attributes = 1;
+
+		//draw enemy wings
+		ppu.sprites[enemies[i].index + 1].x = int8_t(enemies[i].position.x - 8);
+		ppu.sprites[enemies[i].index + 1].y = int8_t(enemies[i].position.y);
+		ppu.sprites[enemies[i].index + 1].index = 6;
+		ppu.sprites[enemies[i].index + 1].attributes = 1;
+		ppu.sprites[enemies[i].index + 2].x = int8_t(enemies[i].position.x + 8);
+		ppu.sprites[enemies[i].index + 2].y = int8_t(enemies[i].position.y);
+		ppu.sprites[enemies[i].index + 2].index = 6;
+		ppu.sprites[enemies[i].index + 2].attributes = 1;
+
+		//draw shots
+		ppu.sprites[shots[i].index].x = int8_t(shots[i].position.x);
+		ppu.sprites[shots[i].index].y = int8_t(shots[i].position.y);
+		ppu.sprites[shots[i].index].index = 8;
+		ppu.sprites[shots[i].index].attributes = 1;
 	}
 
 	//--- actually draw ---
